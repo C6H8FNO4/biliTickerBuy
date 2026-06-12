@@ -3,8 +3,9 @@ import os
 import subprocess
 import sys
 import time
+import uuid
 from random import randint
-from datetime import datetime
+import datetime
 from json import JSONDecodeError
 import shutil
 import qrcode
@@ -20,6 +21,7 @@ from util.CTokenUtil import CTokenGenerator
 
 
 base_url = "https://show.bilibili.com"
+BEIJING_TZ = datetime.timezone(datetime.timedelta(hours=8), name="Asia/Shanghai")
 
 
 def get_qrcode_url(_request, order_id) -> str:
@@ -43,7 +45,7 @@ def _wait_until_start(time_start: str):
 
     timeoffset = time_service.get_timeoffset()
     yield "0) 等待开始时间"
-    yield f"时间偏差已被设置为: {timeoffset}s"
+    yield f"时间偏差已被设置为: {timeoffset}秒"
 
     for fmt in (
         "%Y-%m-%dT%H:%M:%S",
@@ -52,7 +54,9 @@ def _wait_until_start(time_start: str):
         "%Y-%m-%d %H:%M",
     ):
         try:
-            target_time = datetime.strptime(time_start.strip(), fmt)
+            target_time = datetime.datetime.strptime(time_start.strip(), fmt).replace(
+                tzinfo=BEIJING_TZ
+            )
             break
         except ValueError:
             continue
@@ -294,6 +298,8 @@ def buy_new_terminal(
     meowNickname=None,
     show_random_message=True,
     terminal_ui="网页",
+    server_name: str | None = None,
+    log_file_path: str | None = None,
 ) -> subprocess.Popen:
     command = None
 
@@ -341,14 +347,21 @@ def buy_new_terminal(
         command.extend(["--https_proxys", https_proxys])
     if not show_random_message:
         command.extend(["--hide_random_message"])
+    if server_name:
+        command.extend(["--server_name", server_name])
     if terminal_ui == "网页":
         command.append("--web")
     command.extend(["--endpoint_url", endpoint_url])
+    env = os.environ.copy()
+    if log_file_path:
+        env["BTB_APP_LOG_NAME"] = os.path.basename(log_file_path)
+    else:
+        env.setdefault("BTB_APP_LOG_NAME", f"{uuid.uuid4()}.log")
     if terminal_ui == "网页":
-        proc = subprocess.Popen(command)
+        proc = subprocess.Popen(command, env=env)
     else:
         kwargs = {}
         if os.name == "nt":
             kwargs["creationflags"] = subprocess.CREATE_NEW_CONSOLE
-        proc = subprocess.Popen(command, **kwargs)
+        proc = subprocess.Popen(command, env=env, **kwargs)
     return proc

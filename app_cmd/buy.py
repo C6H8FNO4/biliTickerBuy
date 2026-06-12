@@ -1,7 +1,9 @@
 from argparse import Namespace
 import os
+import re
+import threading
 
-from util import GlobalStatusInstance, get_application_path
+from util import GlobalStatusInstance, build_public_url, get_application_path
 
 
 def buy_cmd(args: Namespace):
@@ -23,12 +25,20 @@ def buy_cmd(args: Namespace):
                 raise SystemExit(f"读取配置文件失败: {exc}") from exc
         return tickets_info, None
 
+    def resolve_log_file_name() -> str:
+        configured_name = os.environ.get("BTB_APP_LOG_NAME", "").strip()
+        if configured_name:
+            return re.sub(r"[^\w.\-]", "_", os.path.basename(configured_name))
+        return f"{uuid.uuid4()}.log"
+
     tickets_info, config_path = load_tickets_info(args.tickets_info)
     filename = os.path.basename(config_path) if config_path else "default"
     filename_only = os.path.basename(filename)
     css_path = os.path.join(get_application_path(), "assets", "style.css")
+    log_file_name = resolve_log_file_name()
     if getattr(args, "web", False):
-        log_file = loguru_config(LOG_DIR, f"{uuid.uuid1()}.log", enable_console=False)
+        log_file = loguru_config(LOG_DIR, log_file_name, enable_console=False)
+        logger.info(f"抢票日志路径：{log_file}")
         from task.endpoint import start_heartbeat_thread
         import gradio_client
         import gradio as gr
@@ -75,14 +85,16 @@ def buy_cmd(args: Namespace):
         )
         client = gradio_client.Client(args.endpoint_url)
         assert demo.local_url
+        self_url = build_public_url(demo.local_url, args.server_name)
         GlobalStatusInstance.nowTask = filename_only
         start_heartbeat_thread(
             client,
-            self_url=demo.local_url,
+            self_url=self_url,
             to_url=args.endpoint_url,
         )
     else:
-        log_file = loguru_config(LOG_DIR, f"{uuid.uuid1()}.log", enable_console=True)
+        log_file = loguru_config(LOG_DIR, log_file_name, enable_console=True)
+        logger.info(f"抢票日志路径：{log_file}")
     buy(
         tickets_info,
         args.time_start,
@@ -99,4 +111,7 @@ def buy_cmd(args: Namespace):
         args.meowNickname,
         not args.hide_random_message,
     )
+    if getattr(args, "web", False):
+        logger.info("抢票流程已结束，网页将保持运行，直到用户点击关闭程序。")
+        threading.Event().wait()
     logger.info("抢票完成后退出程序。。。。。")

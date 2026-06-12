@@ -14,7 +14,6 @@ import gradio as gr
 import qrcode
 import requests
 import util
-from gradio_calendar import Calendar
 from loguru import logger
 
 from interface.common import _format_sale_status
@@ -353,9 +352,9 @@ def on_submit_ticket_id(num):
                 ),
                 visible=True,
             ),
-            gr.update(visible=True, value=sales_dates[0])
+            gr.update(choices=sales_dates, visible=True, value=sales_dates[0])
             if sales_dates_show
-            else gr.update(visible=False),
+            else gr.update(choices=[], visible=False, value=None),
         ]
     except gr.Error as exc:
         gr.Warning(exc.message)
@@ -425,6 +424,7 @@ def on_submit_all(
             "project_id": ticket_cur["project_id"],
             "is_hot_project": ticket_cur["ticket"]["is_hot_project"],
             "sku_id": ticket_cur["ticket"]["id"],
+            "sale_start": ticket_cur["ticket"].get("sale_start", ""),
             "order_type": 1,
             "pay_money": ticket_cur["ticket"]["price"] * len(people_indices),
             "buyer_info": people_cur,
@@ -482,43 +482,17 @@ def upload_file(filepath):
         raise gr.Error("登录信息导入失败，请检查文件格式。")
 
 
-def setting_tab():
+def login_tab():
     with gr.Column(elem_classes="btb-page-section"):
         gr.HTML(
             """
             <section class="btb-section-head">
                 <div>
-                    <div class="btb-section-head__eyebrow">STEP 01</div>
-                    <h2>生成抢票配置</h2>
-                    <p>先完成账号授权，再补齐联系人、票务和配送信息，最后导出配置文件。</p>
+                    <div class="btb-section-head__eyebrow">STEP 00</div>
+                    <h2>账号登录</h2>
+                    <p>先登录或导入会员购账号，再回到生成配置继续填写票务信息。</p>
                 </div>
             </section>
-            """
-        )
-
-        gr.HTML(
-            """
-            <div class="btb-card btb-card-amber">
-                <div class="btb-card-head">
-                    <div>
-                        <div class="btb-card-head__eyebrow">Before You Start</div>
-                        <h3>使用前必读</h3>
-                        <p>请先在会员购中心补齐基础资料，否则生成配置时可能没有可选项。</p>
-                    </div>
-                    <span class="btb-badge-amber">准备检查</span>
-                </div>
-                <div class="btb-mini-grid">
-                    <div class="btb-mini-card">
-                        <strong>收货地址</strong>
-                        <span>会员购中心 → 地址管理</span>
-                    </div>
-                    <div class="btb-mini-card">
-                        <strong>购票人信息</strong>
-                        <span>会员购中心 → 购票人信息</span>
-                    </div>
-                </div>
-                <p class="btb-card-note">建议提前补齐资料，避免开抢前还要回到会员购手动修改。</p>
-            </div>
             """
         )
 
@@ -548,7 +522,7 @@ def setting_tab():
                     )
                     qr.add_data(url)
                     qr.make(fit=True)
-                    path = os.path.join(TEMP_PATH, "login_qrcode.png")
+                    path = os.path.join(TEMP_PATH, f"login_qrcode_{qrcode_key}.png")
                     qr.make_image(
                         fill_color="black", back_color="white"
                     ).get_image().save(path)
@@ -589,10 +563,26 @@ def setting_tab():
 
         qrcode_key_state = gr.State("")
 
-        # 多账号辅助函数
         def _get_account_choices():
             accounts = util.main_request.cookieManager.get_accounts()
             return [f"{a.uid} - {a.name} (Lv{a.level})" for a in accounts]
+
+        def _get_default_account_choice() -> str | None:
+            accounts = util.main_request.cookieManager.get_accounts()
+            if not accounts:
+                return None
+
+            active_uid = util.main_request.cookieManager.get_cookies_value("DedeUserID")
+            if active_uid is not None:
+                active_uid = str(active_uid)
+                for account in accounts:
+                    if account.uid == active_uid:
+                        return f"{account.uid} - {account.name} (Lv{account.level})"
+
+            first_account = accounts[0]
+            return (
+                f"{first_account.uid} - {first_account.name} (Lv{first_account.level})"
+            )
 
         def _find_uid_from_choice(choice: str) -> str:
             if not choice:
@@ -600,10 +590,8 @@ def setting_tab():
             return choice.split(" - ")[0] if " - " in choice else choice
 
         def _activate_account(account) -> None:
-            """将账号的 cookies 写入 GLOBAL_COOKIE_PATH 并设为当前活跃账号，同时检查可用性"""
             set_main_request(BiliRequest(cookies_config_path=GLOBAL_COOKIE_PATH))
             util.main_request.cookieManager.db.insert("cookie", account.cookies)
-            # 检查账号可用性
             name = util.main_request.get_request_name()
             if name == "未登录":
                 gr.Warning(
@@ -664,6 +652,7 @@ def setting_tab():
                     account_dropdown = gr.Dropdown(
                         label="当前账号",
                         choices=_get_account_choices(),
+                        value=_get_default_account_choice,
                         interactive=True,
                         allow_custom_value=False,
                         filterable=False,
@@ -684,7 +673,6 @@ def setting_tab():
                     )
 
             def on_login_click():
-                """生成二维码"""
                 img_path, msg_or_key = start_login()
                 if img_path:
                     gr.Info("已生成二维码，请用 B 站客户端扫码", duration=5)
@@ -699,10 +687,8 @@ def setting_tab():
                 ]
 
             def on_check_login(key):
-                """扫码成功后添加到账号池并切换"""
                 if not key:
                     return [
-                        gr.update(),
                         gr.update(),
                         gr.update(),
                         gr.update(),
@@ -720,8 +706,11 @@ def setting_tab():
                             gr.update(value=GLOBAL_COOKIE_PATH),
                             gr.update(visible=False),
                             gr.update(visible=False),
-                            gr.update(choices=new_choices, value=new_choices[-1]),
-                            gr.update(),
+                            gr.update(
+                                choices=new_choices,
+                                value=_get_default_account_choice(),
+                            ),
+                            gr.update(value=""),
                         ]
                     except Exception as exc:
                         logger.exception(exc)
@@ -734,18 +723,16 @@ def setting_tab():
                     gr.update(),
                     gr.update(),
                     gr.update(),
-                    gr.update(),
                 ]
 
             def on_dropdown_change(choice):
-                """下拉框选择即切换账号"""
                 uid = _find_uid_from_choice(choice)
                 if not uid:
-                    return [gr.update(), gr.update(), gr.update()]
+                    return [gr.update(), gr.update()]
                 account = util.main_request.cookieManager.find_by_uid(uid)
                 if account is None:
                     gr.Warning(f"未找到账号 {uid}", duration=5)
-                    return [gr.update(), gr.update(), gr.update()]
+                    return [gr.update(), gr.update()]
                 _activate_account(account)
                 gr.Info(f"已切换到账号 {account.name}", duration=5)
                 return [
@@ -754,11 +741,10 @@ def setting_tab():
                 ]
 
             def on_delete_account(choice):
-                """删除下拉框当前选中的账号"""
                 uid = _find_uid_from_choice(choice)
                 if not uid:
                     gr.Warning("请先选择一个账号", duration=5)
-                    return [gr.update(), gr.update(), gr.update(), gr.update()]
+                    return [gr.update(), gr.update(), gr.update()]
                 account = util.main_request.cookieManager.find_by_uid(uid)
                 util.main_request.cookieManager.remove_account(uid)
                 new_choices = _get_account_choices()
@@ -769,7 +755,6 @@ def setting_tab():
                 )
 
                 if was_active and new_choices:
-                    # 删除的是当前活跃账号，切换到第一个账号
                     first_account = util.main_request.cookieManager.get_accounts()[0]
                     _activate_account(first_account)
                     gr.Info(
@@ -781,8 +766,7 @@ def setting_tab():
                         gr.update(choices=new_choices, value=new_choices[0]),
                         gr.update(),
                     ]
-                elif was_active:
-                    # 删除的是当前活跃账号，但没有其他账号可切换，清空登录状态
+                if was_active:
                     set_main_request(
                         BiliRequest(cookies_config_path=GLOBAL_COOKIE_PATH)
                     )
@@ -796,22 +780,18 @@ def setting_tab():
                         gr.update(choices=new_choices, value=None),
                         gr.update(),
                     ]
-                else:
-                    # 删除的不是当前活跃账号，直接删除并刷新列表
-                    gr.Info(
-                        f"已删除账号 {account.name if account else uid}", duration=5
-                    )
-                    return [
-                        gr.update(),
-                        gr.update(choices=new_choices, value=None),
-                        gr.update(),
-                        gr.update(),
-                    ]
 
-            login_btn.click(
-                on_login_click,
-                outputs=[qr_img, qrcode_key_state],
-            )
+                gr.Info(f"已删除账号 {account.name if account else uid}", duration=5)
+                return [
+                    gr.update(),
+                    gr.update(
+                        choices=new_choices,
+                        value=_get_default_account_choice(),
+                    ),
+                    gr.update(),
+                ]
+
+            login_btn.click(on_login_click, outputs=[qr_img, qrcode_key_state])
 
             @gr.on(qrcode_key_state.change, inputs=qrcode_key_state, outputs=check_btn)
             def qrcode_key_state_change(key):
@@ -828,20 +808,58 @@ def setting_tab():
                     qrcode_key_state,
                 ],
             )
-
             account_dropdown.change(
                 on_dropdown_change,
                 inputs=[account_dropdown],
                 outputs=[gr_file_ui, account_dropdown],
             )
-
             delete_btn.click(
                 on_delete_account,
                 inputs=[account_dropdown],
                 outputs=[gr_file_ui, account_dropdown, qr_img],
             )
-
             upload_ui.upload(upload_file, [upload_ui], [gr_file_ui, account_dropdown])
+
+
+def setting_tab():
+    with gr.Column(elem_classes="btb-page-section"):
+        gr.HTML(
+            """
+            <section class="btb-section-head">
+                <div>
+                    <div class="btb-section-head__eyebrow">STEP 01</div>
+                    <h2>生成抢票配置</h2>
+                    <p>先完成账号授权，再补齐联系人、票务和配送信息，最后导出配置文件。</p>
+                </div>
+            </section>
+            """
+        )
+
+        gr.HTML(
+            """
+            <div class="btb-card btb-card-amber">
+                <div class="btb-card-head">
+                    <div>
+                        <div class="btb-card-head__eyebrow">Before You Start</div>
+                        <h3>使用前必读</h3>
+                        <p>请先在会员购中心补齐基础资料，否则生成配置时可能没有可选项。</p>
+                    </div>
+                    <span class="btb-badge-amber">准备检查</span>
+                </div>
+                <div class="btb-mini-grid">
+                    <div class="btb-mini-card">
+                        <strong>收货地址</strong>
+                        <span>会员购中心 → 地址管理</span>
+                    </div>
+                    <div class="btb-mini-card">
+                        <strong>购票人信息</strong>
+                        <span>会员购中心 → 购票人信息</span>
+                    </div>
+                </div>
+                <p class="btb-card-note">建议提前补齐资料，避免开抢前还要回到会员购手动修改。</p>
+            </div>
+            """
+        )
 
         with gr.Accordion(
             label="填写当前账号绑定的手机号（可选）",
@@ -891,16 +909,16 @@ def setting_tab():
             with gr.Column(
                 visible=False, elem_id="ticket-detail", elem_classes="btb-detail-shell"
             ) as inner:
-                with gr.Row(elem_classes="btb-split-grid !items-end"):
+                with gr.Row():
                     ticket_info_ui = gr.Dropdown(
                         label="选择票档",
                         interactive=True,
                         type="index",
                         info="请仔细确认票档和起售时间",
                     )
-                    data_ui = Calendar(
-                        type="string",
+                    date_ui = gr.Dropdown(
                         label="选择日期",
+                        choices=[],
                         info="若活动有多日期场次，请先切换日期",
                         interactive=True,
                     )
@@ -967,7 +985,7 @@ def setting_tab():
                     address_ui,
                     inner,
                     info_ui,
-                    data_ui,
+                    date_ui,
                 ],
                 show_progress="hidden",
             )
@@ -987,7 +1005,7 @@ def setting_tab():
                     if not screens:
                         gr.Warning("该日期暂无票务信息。")
                         return [
-                            gr.update(value=_date, visible=True),
+                            gr.update(choices=sales_dates, value=_date, visible=True),
                             gr.update(choices=[]),
                             gr.update(value="", visible=False),
                         ]
@@ -1017,7 +1035,7 @@ def setting_tab():
                             )
 
                     return [
-                        gr.update(value=_date, visible=True),
+                        gr.update(choices=sales_dates, value=_date, visible=True),
                         gr.update(choices=ticket_str_list),
                         gr.update(
                             value=_render_ticket_info_html(
@@ -1042,8 +1060,8 @@ def setting_tab():
                         gr.update(value="", visible=False),
                     ]
 
-            data_ui.change(
+            date_ui.change(
                 fn=on_submit_data,
-                inputs=data_ui,
-                outputs=[data_ui, ticket_info_ui, info_ui],
+                inputs=date_ui,
+                outputs=[date_ui, ticket_info_ui, info_ui],
             )
