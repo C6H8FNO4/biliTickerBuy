@@ -83,30 +83,26 @@ def go_tab(demo: gr.Blocks):
                             </p>
                         </div>
                         <span class="btb-badge-pink">精确到秒</span>
+                        <div class="btb-time-picker-card">
+                            <label class="btb-time-picker-card__label" for="datetime">
+                                抢票开始时间
+                            </label>
+                            <input
+                                type="datetime-local"
+                                id="datetime"
+                                name="datetime"
+                                step="1"
+                                class="btb-native-datetime-input"
+                            >
+                            <p class="btb-time-picker-card__hint">
+                                会根据已上传配置自动检查每个票档的起售时间，并回填可安全开抢的时间点。
+                            </p>
+                        </div>
                     </div>
                     """,
                     label="选择抢票的时间",
                 )
 
-                gr.HTML(
-                    """
-                    <div class="btb-time-picker-card">
-                        <label class="btb-time-picker-card__label" for="datetime">
-                            抢票开始时间
-                        </label>
-                        <input
-                            type="datetime-local"
-                            id="datetime"
-                            name="datetime"
-                            step="1"
-                            class="btb-native-datetime-input"
-                        >
-                        <p class="btb-time-picker-card__hint">
-                            会根据已上传配置自动检查每个票档的起售时间，并回填可安全开抢的时间点。
-                        </p>
-                    </div>
-                    """
-                )
             with gr.Row(elem_classes="!justify-end"):
                 auto_fill_time_btn = gr.Button(
                     "自动填写抢票时间",
